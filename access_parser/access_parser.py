@@ -76,7 +76,7 @@ class AccessParser(object):
             self.page_size = PAGE_SIZE_V4
 
         else:
-            if version != VERSION_3:
+            if not version == VERSION_3:
                 LOGGER.error(f"Unknown database version {version} Trying to parse database as version 3")
             self.version = ALL_VERSIONS[VERSION_3]
             self.page_size = PAGE_SIZE_V3
@@ -121,7 +121,7 @@ class AccessParser(object):
             table_type = 1
             if catalog["Type"][i] == table_type:
                 # Don't parse system tables
-                if catalog["Flags"][i] not in SYSTEM_TABLE_FLAGS:
+                if not catalog["Flags"][i] in SYSTEM_TABLE_FLAGS:
                     tables_mapping[table_name] = catalog['Id'][i]
                 else:
                     LOGGER.debug(f"Not parsing system table - {table_name}")
@@ -276,8 +276,10 @@ class AccessTable(object):
             LOGGER.error(f"Failed to parse null table column count {self.table_header.column_count}")
             return
         if self.version > 3:
+            field_count = struct.unpack_from("h", record)[0]
             record = record[2:]
         else:
+            field_count = struct.unpack_from("b", record)[0]
             record = record[1:]
 
         relative_records_column_map = {}
@@ -383,6 +385,16 @@ class AccessTable(object):
 
     def _get_relative_object_data(self, var_no: int, relative_record_metadata, original_record,
                               rel_start, rel_end):
+        """
+        Args:
+            :param var_no: variable column number
+            :param relative_record_metadata: parsed record metadata
+            :param original_record: full unmodified record
+            :param rel_start: start of the current offset
+            :param rel_end: end of the current offset
+
+        Returns: the value of the relative object data
+        """
 
         """
         Jet 3 records can cross a 0x100-byte boundary. Access stores the
@@ -443,6 +455,7 @@ class AccessTable(object):
         :param null_table: list indicating which columns have null value
         """
         relative_offsets = relative_record_metadata.variable_length_field_offsets
+        jump_table_addition = 0
 
         for i, column_index in enumerate(relative_records_column_map):
             column = relative_records_column_map[column_index]
@@ -472,6 +485,7 @@ class AccessTable(object):
             relative_obj_data = self._get_relative_object_data(var_no, relative_record_metadata,
                                                                original_record, rel_start, rel_end)
 
+            # if rel_start and rel_end are the same there is no data in this slot
             if rel_start == rel_end:
                 self.parsed_table[col_name].append("")
                 continue
@@ -598,10 +612,6 @@ class AccessTable(object):
             LOGGER.debug("LVAL type 1")
             memo_data = self._get_overflow_record(parsed_memo.record_pointer)
         else:
-            LOGGER.debug(
-                "LVAL type 2: requesting overflow page 0x%08x",
-                parsed_memo.record_pointer,
-            )
             LOGGER.debug("LVAL type 2")
             rec_data = self._get_overflow_record(parsed_memo.record_pointer)
             next_page = struct.unpack("I", rec_data[:4])[0]
